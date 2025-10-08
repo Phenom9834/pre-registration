@@ -34,19 +34,50 @@ jobs:
       GPG_SECRET: ${{ secrets.GPG_SECRET }}
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
 
-  publish_to_nexus:
-    if: "${{ !contains(github.ref, 'master') && github.event_name != 'pull_request' && github.event_name != 'release' && github.event_name != 'prerelease' && github.event_name != 'publish' }}"
+  docker_build_and_push:
+    name: Build & Push Docker Image to DockerHub
     needs: build-maven-pre-registration
-    uses: mosip/kattu/.github/workflows/maven-publish-to-nexus.yml@master
-    with:
-      SERVICE_LOCATION: ./pre-registration
-    secrets:
-      OSSRH_USER: ${{ secrets.OSSRH_USER }}
-      OSSRH_SECRET: ${{ secrets.OSSRH_SECRET }}
-      OSSRH_URL: ${{ secrets.OSSRH_CENTRAL_URL }}
-      OSSRH_TOKEN: ${{ secrets.OSSRH_TOKEN }}
-      GPG_SECRET: ${{ secrets.GPG_SECRET }}
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' && github.event_name != 'release' }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: 17
+
+      - name: Build JAR using Maven
+        run: |
+          cd pre-registration
+          mvn clean package -DskipTests
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./pre-registration
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/pre-registration:latest
+
+      - name: Notify Slack
+        if: always()
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: ${{ job.status }}
+          SLACK_MESSAGE: "Docker image published to DockerHub: `${{ secrets.DOCKERHUB_USERNAME }}/pre-registration:latest`"
+
 
   build-dockers:
     needs: build-maven-pre-registration
